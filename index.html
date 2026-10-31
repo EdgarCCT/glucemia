@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b6e4f">
+<meta name="description" content="Registro y control de glucemia">
+<title>Glucemia</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="css/app.css">
+<script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script type="module" src="js/app.js"></script>
+</head>
+<body>
+<header class="top">
+  <h1 id="titulo">Glucemia</h1>
+  <button id="btnSync" class="chip-sync" type="button" title="Sincronizar ahora"><span class="dot"></span><span id="syncTxt">…</span></button>
+</header>
+
+<main id="main">
+  <!-- LOGIN -->
+  <section id="v-login" class="vista" hidden>
+    <div class="card">
+      <h2>Ingresar</h2>
+      <p class="hint">Tus datos se guardan en tu cuenta y se ven en el celular y en la PC.</p>
+      <form id="fLogin">
+        <label>Email<input type="email" id="lEmail" autocomplete="username" required></label>
+        <label>Clave<input type="password" id="lClave" autocomplete="current-password" required></label>
+        <button class="btn primario" type="submit">Ingresar</button>
+        <p id="lError" class="error"></p>
+      </form>
+    </div>
+  </section>
+
+  <!-- INICIO -->
+  <section id="v-inicio" class="vista">
+    <div class="card ultimo" id="ultimo"></div>
+    <button class="btn primario grande" data-ir="registro" type="button">+ Nuevo registro</button>
+    <div class="card">
+      <div class="card-tit"><h2>Últimos 14 días</h2><button class="link" data-ir="stats" type="button">Ver estadísticas</button></div>
+      <div id="resumen14"></div>
+    </div>
+    <div class="card">
+      <div class="card-tit"><h2>Hoy</h2><button class="link" data-ir="historial" type="button">Historial</button></div>
+      <div id="hoyLista"></div>
+    </div>
+    <div class="card" id="cardRecord"></div>
+  </section>
+
+  <!-- REGISTRO -->
+  <section id="v-registro" class="vista" hidden>
+    <form id="fReg" class="card" autocomplete="off">
+      <div class="card-tit"><h2 id="regTitulo">Nuevo registro</h2><span id="regMod" class="hint"></span></div>
+      <div class="fila2">
+        <label>Fecha<input type="date" name="fecha" required></label>
+        <label>Hora<input type="time" name="hora" required></label>
+      </div>
+      <label class="lbl-gluc">Glucemia (mg/dl)
+        <input type="number" name="glucemia" id="inGluc" inputmode="numeric" min="10" max="700" step="1" placeholder="—">
+      </label>
+      <div id="alertaGluc" class="alerta" hidden></div>
+      <label>Momento
+        <select name="momento" id="selMomento"></select>
+      </label>
+
+      <details class="sec" data-sec="insulina">
+        <summary>Insulina</summary>
+        <div class="fila2">
+          <label>Basal / lenta (U)<input type="number" name="insulina_basal_u" inputmode="decimal" step="0.5" min="0"></label>
+          <label>Nombre<input name="insulina_basal_tipo" list="dlBasal" placeholder="Ej.: Glargina"></label>
+        </div>
+        <div class="fila2">
+          <label>Rápida (U)<input type="number" name="insulina_rapida_u" inputmode="decimal" step="0.5" min="0"></label>
+          <label>Nombre<input name="insulina_rapida_tipo" list="dlRapida" placeholder="Ej.: Lispro"></label>
+        </div>
+        <label>Corrección (U)<input type="number" name="insulina_correccion_u" inputmode="decimal" step="0.5" min="0"></label>
+        <datalist id="dlBasal"></datalist><datalist id="dlRapida"></datalist>
+      </details>
+
+      <details class="sec" data-sec="medicacion">
+        <summary>Medicación</summary>
+        <div id="medHabitual" class="chips"></div>
+        <label>Otra medicación<input name="med_otra" placeholder="Ej.: Metformina 850 mg"></label>
+      </details>
+
+      <details class="sec" data-sec="comida">
+        <summary>Comida y carbohidratos</summary>
+        <div class="fila2">
+          <label>Comida<select name="comida_tipo"><option value=""></option></select></label>
+          <label>Carbohidratos (g)<input type="number" name="carbohidratos_g" inputmode="numeric" min="0"></label>
+        </div>
+        <label>Qué comiste<input name="comida_desc" list="dlComidas" placeholder="Ej.: 2 tostadas con queso"></label>
+        <datalist id="dlComidas"></datalist>
+      </details>
+
+      <details class="sec" data-sec="actividad">
+        <summary>Actividad física</summary>
+        <label>Actividad<input name="actividad_tipo" list="dlAct" placeholder="Ej.: Bicicleta"></label>
+        <datalist id="dlAct"></datalist>
+        <div class="fila2">
+          <label>Duración (min)<input type="number" name="actividad_min" inputmode="numeric" min="0"></label>
+          <label>Intensidad<select name="actividad_intensidad"><option value=""></option></select></label>
+        </div>
+      </details>
+
+      <details class="sec" data-sec="sintomas">
+        <summary>Síntomas</summary>
+        <div id="chipsSint" class="chips"></div>
+      </details>
+
+      <details class="sec" data-sec="signos">
+        <summary>Peso y presión</summary>
+        <div class="fila3">
+          <label>Peso (kg)<input type="number" name="peso_kg" inputmode="decimal" step="0.1" min="0"></label>
+          <label>Sistólica<input type="number" name="pa_sistolica" inputmode="numeric" min="0"></label>
+          <label>Diastólica<input type="number" name="pa_diastolica" inputmode="numeric" min="0"></label>
+        </div>
+        <label>Pulso (lpm)<input type="number" name="pulso" inputmode="numeric" min="0"></label>
+      </details>
+
+      <label>Observaciones<textarea name="notas" rows="2" placeholder="Opcional"></textarea></label>
+
+      <button class="btn primario grande" type="submit" id="btnGuardar">GUARDAR</button>
+      <div id="accEdicion" hidden>
+        <button class="btn" type="button" id="btnCancelar">Cancelar edición</button>
+        <button class="btn peligro" type="button" id="btnBorrar">Borrar registro</button>
+        <details class="sec" id="secCambios"><summary>Historial de cambios</summary><div id="listaCambios"></div></details>
+      </div>
+    </form>
+  </section>
+
+  <!-- HISTORIAL -->
+  <section id="v-historial" class="vista" hidden>
+    <div class="card filtros">
+      <div class="fila2">
+        <label>Desde<input type="date" id="hDesde"></label>
+        <label>Hasta<input type="date" id="hHasta"></label>
+      </div>
+      <div class="fila2">
+        <label>Buscar<input type="search" id="hBuscar" placeholder="Texto, actividad, comida…"></label>
+        <label>Mostrar<select id="hTipo">
+          <option value="">Todo</option><option value="gluc">Con glucemia</option><option value="hipo">Hipoglucemias</option>
+          <option value="alto">Valores altos</option><option value="ins">Con insulina</option><option value="sint">Con síntomas</option>
+        </select></label>
+      </div>
+      <p class="hint">Tocá un registro para verlo o modificarlo.</p>
+    </div>
+    <div id="hLista"></div>
+  </section>
+
+  <!-- ESTADÍSTICAS -->
+  <section id="v-stats" class="vista" hidden>
+    <div class="card periodo" id="sPeriodo"></div>
+    <div id="sCuerpo"></div>
+  </section>
+
+  <!-- INFORMES -->
+  <section id="v-informes" class="vista" hidden>
+    <div class="card">
+      <h2>Informe para el médico</h2>
+      <div class="periodo" id="iPeriodo"></div>
+      <label class="check"><input type="checkbox" id="iTabla" checked> Incluir la tabla completa de registros</label>
+      <label class="check"><input type="checkbox" id="iGraf" checked> Incluir gráficos</label>
+      <p class="hint" id="iInfo"></p>
+    </div>
+    <div class="card acciones">
+      <h3>Compartir (WhatsApp, mail…)</h3>
+      <button class="btn azul" type="button" data-inf="pdf" data-modo="compartir">Compartir PDF</button>
+      <button class="btn azul" type="button" data-inf="xlsx" data-modo="compartir">Compartir Excel (XLSX)</button>
+      <button class="btn azul" type="button" data-inf="html" data-modo="compartir">Compartir HTML</button>
+      <h3>Descargar</h3>
+      <div class="fila3">
+        <button class="btn" type="button" data-inf="pdf" data-modo="descargar">PDF</button>
+        <button class="btn" type="button" data-inf="xlsx" data-modo="descargar">XLSX</button>
+        <button class="btn" type="button" data-inf="html" data-modo="descargar">HTML</button>
+      </div>
+      <button class="btn" type="button" id="btnVerInforme">Ver informe en pantalla</button>
+    </div>
+  </section>
+
+  <!-- MÁS -->
+  <section id="v-mas" class="vista" hidden>
+    <div class="menu card">
+      <button type="button" data-ir="lab">Laboratorio (HbA1c y análisis)</button>
+      <button type="button" data-ir="config">Perfil, rangos y tratamiento</button>
+      <button type="button" data-ir="recordatorios">Recordatorios</button>
+      <button type="button" data-ir="datos">Importar, respaldo y papelera</button>
+      <button type="button" data-ir="cuenta">Cuenta y sincronización</button>
+      <button type="button" data-ir="ayuda">Ayuda y metas clínicas</button>
+    </div>
+  </section>
+
+  <section id="v-lab" class="vista" hidden>
+    <form id="fLab" class="card" autocomplete="off">
+      <div class="card-tit"><h2 id="labTitulo">Nuevo análisis</h2></div>
+      <label>Fecha<input type="date" name="fecha" required></label>
+      <div id="labCampos" class="fila2 wrap"></div>
+      <label>Otros resultados<input name="otros" placeholder="Ej.: TSH 2,1"></label>
+      <label>Notas<input name="notas"></label>
+      <button class="btn primario" type="submit">Guardar análisis</button>
+      <div id="labEd" hidden>
+        <button class="btn" type="button" id="labCancelar">Cancelar edición</button>
+        <button class="btn peligro" type="button" id="labBorrar">Borrar análisis</button>
+      </div>
+    </form>
+    <div class="card"><h2>Evolución de HbA1c</h2><div class="graf"><canvas id="gHba1c"></canvas></div></div>
+    <div class="card"><h2>Análisis cargados</h2><div id="labLista"></div></div>
+  </section>
+
+  <section id="v-config" class="vista" hidden>
+    <form id="fCfg" autocomplete="off">
+      <div class="card">
+        <h2>Paciente</h2>
+        <label>Nombre<input name="p_nombre"></label>
+        <div class="fila2">
+          <label>Fecha de nacimiento<input type="date" name="p_nacimiento"></label>
+          <label>Año de diagnóstico<input type="number" name="p_diagnostico" inputmode="numeric"></label>
+        </div>
+        <label>Tipo de diabetes / tratamiento<input name="p_tipo"></label>
+        <div class="fila2">
+          <label>Médico<input name="p_medico"></label>
+          <label>Email del médico<input type="email" name="p_emailMedico"></label>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Rangos objetivo (mg/dl)</h2>
+        <p class="hint">Valores ADA 2026 por defecto. Cambialos solo si tu médico te indicó otros.</p>
+        <div class="fila3">
+          <label>Muy baja &lt;<input type="number" name="r_muyBajo"></label>
+          <label>Baja &lt;<input type="number" name="r_bajo"></label>
+          <label>Alta &gt;<input type="number" name="r_alto"></label>
+        </div>
+        <div class="fila3">
+          <label>Muy alta &gt;<input type="number" name="r_muyAlto"></label>
+          <label>Ayunas mín.<input type="number" name="r_preMin"></label>
+          <label>Ayunas máx.<input type="number" name="r_preMax"></label>
+        </div>
+        <div class="fila3">
+          <label>Posprandial &lt;<input type="number" name="r_postMax"></label>
+          <label>HbA1c meta &lt; %<input type="number" step="0.1" name="r_hba1cMeta"></label>
+          <label>Tiempo en rango &gt; %<input type="number" name="r_tirMeta"></label>
+        </div>
+        <button class="link" type="button" id="cfgRangosDef">Volver a los valores ADA</button>
+        <label class="check"><input type="checkbox" name="alertas"> Mostrar avisos ante valores bajos o muy altos</label>
+      </div>
+      <div class="card">
+        <h2>Insulinas que usás</h2>
+        <div id="cfgInsulinas" class="lista-edit"></div>
+        <button class="link" type="button" data-add="insulinas">+ Agregar insulina</button>
+      </div>
+      <div class="card">
+        <h2>Medicación habitual</h2>
+        <p class="hint">Aparece para marcar con un toque al cargar un registro.</p>
+        <div id="cfgMedicacion" class="lista-edit"></div>
+        <button class="link" type="button" data-add="medicacion">+ Agregar medicamento</button>
+      </div>
+      <div class="card">
+        <h2>Comidas frecuentes</h2>
+        <p class="hint">Al elegirla en el registro completa los carbohidratos.</p>
+        <div id="cfgComidas" class="lista-edit"></div>
+        <button class="link" type="button" data-add="comidasFrecuentes">+ Agregar comida</button>
+      </div>
+      <button class="btn primario grande" type="submit">Guardar configuración</button>
+    </form>
+  </section>
+
+  <section id="v-recordatorios" class="vista" hidden>
+    <div class="card">
+      <h2>Recordatorios</h2>
+      <p class="hint">Para que el celular avise aunque la app esté cerrada, agregalos a tu calendario de Google.</p>
+      <div id="recLista" class="lista-edit"></div>
+      <button class="link" type="button" id="recAgregar">+ Agregar recordatorio</button>
+      <button class="btn primario" type="button" id="recGuardar">Guardar recordatorios</button>
+    </div>
+    <div class="card">
+      <h3>Llevarlos al calendario</h3>
+      <div id="recLinks"></div>
+      <button class="btn" type="button" id="recIcs">Descargar archivo de calendario (.ics)</button>
+      <p class="hint">Archivo .ics: en la PC abrí calendar.google.com → Configuración → Importar. Queda en el celular.</p>
+      <button class="btn" type="button" id="recNotif">Activar avisos con la app abierta</button>
+    </div>
+  </section>
+
+  <section id="v-datos" class="vista" hidden>
+    <div class="card">
+      <h2>Importar de la app anterior</h2>
+      <p class="hint">En la app vieja tocá “Copiar para pegar en Excel” y pegalo acá, o elegí el archivo glucemia.csv.</p>
+      <textarea id="impTexto" rows="5" placeholder="Pegá aquí los registros"></textarea>
+      <input type="file" id="impArchivo" accept=".csv,.txt,.tsv">
+      <button class="btn primario" type="button" id="impBtn">Importar</button>
+      <p id="impRes" class="hint"></p>
+    </div>
+    <div class="card">
+      <h2>Respaldo</h2>
+      <p class="hint">Copia completa de tus datos en un archivo. Recomendado una vez por mes.</p>
+      <button class="btn" type="button" id="bkDescargar">Descargar respaldo (.json)</button>
+      <label class="btn archivo">Restaurar desde respaldo<input type="file" id="bkRestaurar" accept=".json" hidden></label>
+    </div>
+    <div class="card">
+      <h2>Papelera</h2>
+      <p class="hint">Registros borrados. Podés recuperarlos.</p>
+      <div id="papLista"></div>
+    </div>
+  </section>
+
+  <section id="v-cuenta" class="vista" hidden>
+    <div class="card">
+      <h2>Cuenta y sincronización</h2>
+      <div id="ctaInfo"></div>
+      <button class="btn primario" type="button" id="ctaSync">Sincronizar ahora</button>
+      <button class="btn peligro" type="button" id="ctaSalir" hidden>Cerrar sesión</button>
+    </div>
+  </section>
+
+  <section id="v-ayuda" class="vista" hidden>
+    <div class="card prosa" id="ayudaTxt"></div>
+  </section>
+</main>
+
+<nav class="tabs" id="tabs">
+  <button type="button" data-ir="inicio"><svg viewBox="0 0 24 24"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Inicio</button>
+  <button type="button" data-ir="historial"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Historial</button>
+  <button type="button" data-ir="registro" class="mas"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Cargar</button>
+  <button type="button" data-ir="stats"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Estadíst.</button>
+  <button type="button" data-ir="informes"><svg viewBox="0 0 24 24"><path d="M6 2h9l5 5v15H6zM14 2v6h6M9 13h8M9 17h8"/></svg>Informes</button>
+  <button type="button" data-ir="mas"><svg viewBox="0 0 24 24"><path d="M5 12h.01M12 12h.01M19 12h.01"/></svg>Más</button>
+</nav>
+<div id="toast" role="status"></div>
+<div id="graficosOcultos" aria-hidden="true"></div>
+</body>
+</html>

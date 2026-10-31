@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><title>Pruebas Glucemia</title>
+<style>body{font-family:monospace;padding:16px;background:#fff;color:#111}.ok{color:#2e7d32}.mal{color:#c62828;font-weight:bold}</style></head>
+<body><h1>Pruebas</h1><pre id="out"></pre>
+<script type="module">
+import { resumen, banda, claseValor, filtrarPeriodo } from "./js/stats.js";
+import { DEF_RANGOS } from "./js/modelo.js";
+import { filasAppVieja, parsearCSV, interpretarInsulina, esDuplicado } from "./js/importar.js";
+import { generarICS } from "./js/ics.js";
+import * as db from "./js/db.js";
+
+const out = document.getElementById("out"); let fallas = 0, total = 0;
+const eq = (n, a, b) => { total++; const ok = JSON.stringify(a) === JSON.stringify(b);
+  if (!ok) fallas++; out.innerHTML += `<span class="${ok ? "ok" : "mal"}">${ok ? "PASS" : "FAIL"}</span> ${n}${ok ? "" : ` → obtuve ${JSON.stringify(a)}, esperaba ${JSON.stringify(b)}`}\n`; };
+const R = DEF_RANGOS, reg = (fecha, hora, glucemia, extra = {}) => ({ id: fecha + hora, fecha, hora, glucemia, ...extra });
+
+// --- Estadísticas ---
+let s = resumen([reg("2026-10-01", "08:00", 100), reg("2026-10-01", "20:00", 200)], R);
+eq("promedio", s.prom, 150); eq("DE", s.de, 50); eq("CV", s.cv, 33.3); eq("GMI", s.gmi, 6.9);
+eq("mediciones por día", s.medPorDia, 2);
+s = resumen([50, 60, 100, 200, 300].map((v, i) => reg("2026-10-0" + (i + 1), "08:00", v)), R);
+eq("bandas 20% c/u", Object.values(s.bandas), [20, 20, 20, 20, 20]);
+eq("hipos", s.hipos.length, 2); eq("hipos graves", s.hipos54, 1);
+s = resumen([], R);
+eq("período vacío n", s.n, 0); eq("período vacío prom", s.prom, null); eq("período vacío bandas", s.bandas.rango, null);
+s = resumen([reg("2026-10-01", "08:00", null, { insulina_basal_u: 10 }), reg("2026-10-01", "09:00", 120)], R);
+eq("sin glucemia se ignora", s.n, 1); eq("insulina diaria", s.insulinaDiaria, 10);
+eq("borrado se ignora", resumen([reg("2026-10-01", "08:00", 99, { deleted_at: "x" })], R).n, 0);
+eq("banda 70", banda(70, R), "rango"); eq("banda 180", banda(180, R), "rango"); eq("banda 181", banda(181, R), "alta");
+eq("banda 53", banda(53, R), "muyBaja"); eq("banda 251", banda(251, R), "muyAlta");
+eq("ayunas 140 alto", claseValor(140, "Ayunas", R), "alto"); eq("post 170 ok", claseValor(170, "Después almuerzo", R), "ok");
+eq("sin momento 170 ok", claseValor(170, "", R), "ok");
+eq("filtro período", filtrarPeriodo([reg("2026-09-30", "08:00", 1), reg("2026-10-02", "08:00", 1)], "2026-10-01", "2026-10-31").length, 1);
+s = resumen([reg("2026-10-01", "07:00", 150, { momento: "Ayunas" }), reg("2026-10-02", "07:10", 110, { momento: "Ayunas" })], R);
+eq("por momento en meta", s.porMomento[0].enMeta, 50);
+
+// --- Importación de la app anterior ---
+const tsv = "19/10/2026\t06:45\t173\tTrabajo - sentado\t\t\n20/10/2026\t06:51\t157\tTrabajo - sentado\t\t\n20/10/2026\t20:22\t102\t30 minutos Bicicleta - 1:30 hs Tenis de Mesa\t\t\n21/10/2026\t06:50\t147\tTrabajo - sentado\t\t\n21/10/2026\t13:03\t100\tAntes del almuerzo\t\t";
+let imp = filasAppVieja(tsv);
+eq("TSV 5 filas", imp.filas.length, 5); eq("TSV fecha", imp.filas[0].fecha, "2026-10-19"); eq("TSV glucemia", imp.filas[4].glucemia, 100);
+eq("TSV actividad", imp.filas[2].actividad_tipo, "30 minutos Bicicleta - 1:30 hs Tenis de Mesa");
+const csv = '﻿Fecha;Hora;Registro;Actividad;Insulina/Medicación;Comida/Notas\n19/10/2026;06:45;173;"Trabajo; sentado";"10 U lenta";"Dijo ""hola"""';
+imp = filasAppVieja(csv);
+eq("CSV con encabezado y BOM", imp.filas.length, 1); eq("CSV sin errores", imp.errores, []);
+eq("CSV comillas y ;", imp.filas[0].actividad_tipo, "Trabajo; sentado"); eq("CSV comillas dobles", imp.filas[0].notas, 'Dijo "hola"');
+eq("insulina lenta", imp.filas[0].insulina_basal_u, 10);
+eq("insulina rápida", interpretarInsulina("4 U rápida").insulina_rapida_u, 4);
+eq("texto no interpretable", interpretarInsulina("Metformina").extra, "Metformina");
+eq("duplicado", esDuplicado({ fecha: "2026-10-19", hora: "06:45", glucemia: 173 }, filasAppVieja(tsv).filas), true);
+eq("parsear vacío", parsearCSV("  "), []);
+
+// --- Calendario ---
+const ics = generarICS([{ id: "a", hora: "06:45", texto: "Medir, ayunas", activo: true }, { id: "b", hora: "22:00", texto: "x", activo: false }], "2026-11-01");
+eq("ics 1 evento", (ics.match(/BEGIN:VEVENT/g) || []).length, 1);
+eq("ics inicio", ics.includes("DTSTART:20261101T064500"), true); eq("ics diario", ics.includes("RRULE:FREQ=DAILY"), true);
+eq("ics alarma", ics.includes("BEGIN:VALARM"), true); eq("ics escape coma", ics.includes("Medir\\, ayunas"), true);
+
+// --- Base local ---
+db.usarBase("glucemia_pruebas");
+await db.vaciarTodo();
+const a = await db.guardar("registros", { fecha: "2026-10-01", hora: "08:00", glucemia: 120 });
+await db.guardar("registros", { ...a, glucemia: 130 });
+const cambios = await db.cambiosDe(a.id);
+eq("auditoría guarda valor anterior", cambios[0]?.datos_anteriores.glucemia, 120);
+eq("cola sin duplicar", (await db.pendientes()).filter(o => o.tabla === "registros").length, 1);
+await db.borrar("registros", a.id);
+eq("borrado no aparece", (await db.todos("registros")).length, 0);
+eq("borrado en papelera", (await db.papelera("registros")).length, 1);
+await db.restaurar("registros", a.id);
+eq("restaurado", (await db.todos("registros"))[0]?.glucemia, 130);
+const cola = await db.pendientes(); await db.confirmarSubida(cola.find(o => o.tabla === "registros"));
+await db.aplicarRemoto("registros", [{ ...a, glucemia: 999, updated_at: "2000-01-01T00:00:00Z", user_id: "u", sync_at: "z" }]);
+eq("remoto viejo no pisa local", (await db.todos("registros"))[0]?.glucemia, 130);
+await db.aplicarRemoto("registros", [{ ...a, glucemia: 140, updated_at: "2999-01-01T00:00:00Z", user_id: "u" }]);
+const loc = (await db.todos("registros"))[0];
+eq("remoto nuevo actualiza", loc?.glucemia, 140); eq("sin campos del servidor", "user_id" in loc, false);
+await db.vaciarTodo();
+
+out.innerHTML += `\n<b class="${fallas ? "mal" : "ok"}">${total - fallas}/${total} pruebas OK</b>`;
+document.title = fallas ? `FAIL ${fallas}` : `OK ${total}`;
+</script></body></html>
